@@ -1,8 +1,7 @@
 from torch import nn
 import torch.nn.functional as F
 import torch
-from modules.tpsmm.util import Hourglass, AntiAliasInterpolation2d, make_coordinate_grid, kp2gaussian
-from modules.tpsmm.util import to_homogeneous, from_homogeneous, UpBlock2d, TPS
+from tpsmm_plus.modules.tpsmm.util import Hourglass, AntiAliasInterpolation2d, make_coordinate_grid, kp2gaussian, to_homogeneous, from_homogeneous, UpBlock2d, TPS
 import math
 
 class DenseMotionNetwork(nn.Module):

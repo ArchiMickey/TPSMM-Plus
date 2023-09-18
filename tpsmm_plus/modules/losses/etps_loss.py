@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import lpips
 
-from modules.tpsmm.util import AntiAliasInterpolation2d, TPS
+from tpsmm_plus.modules.tpsmm.util import AntiAliasInterpolation2d, TPS
 
 
 class ImagePyramid(nn.Module):

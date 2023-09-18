@@ -1,6 +1,6 @@
 import lightning.pytorch as pl
 from torch.utils.data import DataLoader
-from modules.data.util import FramesDataset, DatasetRepeater
+from tpsmm_plus.modules.data.util import FramesDataset, DatasetRepeater
 
 
 class FrameDataModule(pl.LightningDataModule):

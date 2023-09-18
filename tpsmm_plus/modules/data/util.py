@@ -6,7 +6,7 @@ from imageio import mimread
 from skimage.transform import resize
 import numpy as np
 from torch.utils.data import Dataset
-from modules.data.augmentation import AllAugmentationTransform
+from tpsmm_plus.modules.data.augmentation import AllAugmentationTransform
 import glob
 from functools import partial
 

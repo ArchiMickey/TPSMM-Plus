@@ -2,7 +2,7 @@ from torch import nn
 import torch
 from torchvision import models
 
-from modules.tpsmm.util import Hourglass, AntiAliasInterpolation2d, make_coordinate_grid, DownBlock2d
+from tpsmm_plus.modules.tpsmm.util import Hourglass, AntiAliasInterpolation2d, make_coordinate_grid, DownBlock2d
 
 
 class KPDetector(nn.Module):

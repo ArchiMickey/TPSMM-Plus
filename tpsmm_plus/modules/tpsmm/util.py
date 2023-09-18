@@ -1,7 +1,6 @@
 from torch import nn
 import torch.nn.functional as F
 import torch
-from modules.attention.util import RMSNorm
 
 
 class TPS:

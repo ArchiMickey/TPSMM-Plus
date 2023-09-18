@@ -4,11 +4,11 @@ import torch
 
 torch.set_float32_matmul_precision("medium")
 
-from modules.tpsmm.dense_motion import DenseMotionNetwork
-from modules.tpsmm.inpainting_network import InpaintingNetwork
-from modules.tpsmm.keypoint_detector import KPDetector
-from modules.tpsmm.bg_motion_predictor import BGMotionPredictor
-from modules.losses.etps_loss import ETPSLoss
+from tpsmm_plus.modules.tpsmm.dense_motion import DenseMotionNetwork
+from tpsmm_plus.modules.tpsmm.inpainting_network import InpaintingNetwork
+from tpsmm_plus.modules.tpsmm.keypoint_detector import KPDetector
+from tpsmm_plus.modules.tpsmm.bg_motion_predictor import BGMotionPredictor
+from tpsmm_plus.modules.losses.etps_loss import ETPSLoss
 from util import Plotter
 
 

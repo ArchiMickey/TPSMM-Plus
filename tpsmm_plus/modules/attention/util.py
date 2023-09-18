@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from modules.attention.attend import Attend
+from tpsmm_plus.modules.attention.attend import Attend
 
 
 class RMSNorm(nn.Module):

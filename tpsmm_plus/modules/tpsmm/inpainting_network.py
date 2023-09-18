@@ -1,15 +1,13 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from modules.tpsmm.util import (
-    ResBlock2d,
-    SameBlock2d,
+from tpsmm_plus.modules.tpsmm.util import (
     UpBlock2d,
     DownBlock2d,
 )
-from modules.attention.util import Attention, LinearAttention
-from modules.convnextv2.convnextv2 import Block as ConvNeXtV2Block
-from modules.attention.util import RMSNorm
+from tpsmm_plus.modules.attention.util import Attention, LinearAttention
+from tpsmm_plus.modules.convnextv2.convnextv2 import Block as ConvNeXtV2Block
+from tpsmm_plus.modules.attention.util import RMSNorm
 
 
 class InpaintingNetwork(nn.Module):

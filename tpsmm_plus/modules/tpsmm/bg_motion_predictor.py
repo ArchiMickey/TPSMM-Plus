@@ -2,8 +2,8 @@ from torch import nn
 import torch
 from torchvision import models
 
-from modules.tpsmm.util import AntiAliasInterpolation2d
-from modules.simple_vit import SimpleViT
+from tpsmm_plus.modules.tpsmm.util import AntiAliasInterpolation2d
+from tpsmm_plus.modules.simple_vit import SimpleViT
 
 class BGMotionPredictor(nn.Module):
     """
