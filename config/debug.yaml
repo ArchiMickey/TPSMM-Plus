@@ -69,7 +69,7 @@ train_avd_params:
   random_scale: 0.25
 
 model:
-  _target_: models.etps.ETPS
+  _target_: tpsmm_plus.models.etps.ETPS
   model_params:
     common_params:
       num_tps: 10
@@ -98,7 +98,7 @@ model:
   visualizer_params: ${visualizer_params}
 
 datamodule:
-  _target_: modules.data.datamodule.FrameDataModule
+  _target_: tpsmm_plus.modules.data.datamodule.FrameDataModule
   ds_params: ${dataset_params}
   num_repeats: ${train_params.num_repeats}
   batch_size: ${train_params.batch_size}
