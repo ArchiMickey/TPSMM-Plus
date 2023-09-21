@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+
 from tpsmm_plus.modules.tpsmm.util import (
     UpBlock2d,
     DownBlock2d,
@@ -99,7 +100,7 @@ class InpaintingNetwork(nn.Module):
         out = inp * occlusion_map
         return out
 
-    def forward(self, source_image, dense_motion, kp_source, kp_driving):
+    def forward(self, source_image, dense_motion):
         out = self.first(source_image)
         encoder_map = [out]
         
