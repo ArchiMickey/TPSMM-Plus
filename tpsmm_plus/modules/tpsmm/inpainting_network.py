@@ -47,8 +47,8 @@ class InpaintingNetwork(nn.Module):
             down_blocks.append(
                 nn.ModuleList(
                     [
-                        ConvNeXtV2Block(in_features),
-                        RMSNorm(in_features),
+                        # ConvNeXtV2Block(in_features),
+                        # RMSNorm(in_features),
                         DownBlock2d(in_features, out_features),
                     ]
                 )
@@ -62,7 +62,7 @@ class InpaintingNetwork(nn.Module):
                     [
                         ConvNeXtV2Block(decoder_in_feature),
                         ConvNeXtV2Block(decoder_in_feature),
-                        attn_klass(decoder_in_feature, heads=4, dim_head=32),
+                        # attn_klass(decoder_in_feature, heads=4, dim_head=32),
                         RMSNorm(decoder_in_feature),
                         UpBlock2d(decoder_in_feature, in_features)
                     ]
