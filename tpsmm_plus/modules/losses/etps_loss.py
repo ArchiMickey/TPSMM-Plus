@@ -123,6 +123,7 @@ class ETPSLoss(nn.Module):
             bg_loss = bg_loss * self.loss_weights["bg"]
         out_dict["bg_loss"] = bg_loss
 
+        kp_dist_loss = 0.0
         if self.loss_weights["kp_distance"]:
             bz, num_kp, kp_dim = kp_source["fg_kp"].shape
             sk = kp_source["fg_kp"].unsqueeze(2) - kp_source["fg_kp"].unsqueeze(1)
@@ -148,11 +149,11 @@ class ETPSLoss(nn.Module):
                 + 1
             ).mean()
             # driving_dist_loss = (torch.sign(1-(torch.sqrt((dk*dk).sum(-1)+1e-8)+torch.eye(num_kp).cuda()))+1).mean()
-            value_total = self.loss_weights["kp_distance"] * (
+            kp_dist_loss = self.loss_weights["kp_distance"] * (
                 source_dist_loss + driving_dist_loss
             )
-        out_dict["kp_distance_loss"] = value_total
+        out_dict["kp_distance_loss"] = kp_dist_loss
 
-        loss = rec_loss + p_loss + eq_loss + warp_loss + bg_loss
+        loss = rec_loss + p_loss + eq_loss + warp_loss + bg_loss + kp_dist_loss
 
         return loss, out_dict
