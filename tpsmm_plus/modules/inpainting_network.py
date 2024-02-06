@@ -2,13 +2,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from tpsmm_plus.modules.tpsmm.util import (
+from tpsmm_plus.modules.util import (
     UpBlock2d,
     DownBlock2d,
+    ResBlock2d,
+    SameBlock2d
 )
 from tpsmm_plus.modules.attention.util import Attention, LinearAttention
-from tpsmm_plus.modules.convnextv2.convnextv2 import Block as ConvNeXtV2Block
-from tpsmm_plus.modules.attention.util import RMSNorm
 
 
 class InpaintingNetwork(nn.Module):
@@ -29,41 +29,26 @@ class InpaintingNetwork(nn.Module):
 
         self.num_down_blocks = num_down_blocks
         self.multi_mask = multi_mask
-        # self.first = SameBlock2d(
-        #     num_channels, block_expansion, kernel_size=(3, 3), padding=(1, 1)
-        # )
-        # self.cross_attn = CrossAttention(block_expansion, 1024)
-        self.first = nn.Sequential(
-            nn.Conv2d(num_channels, block_expansion, 7, padding=3),
-            RMSNorm(block_expansion),
+        self.first = SameBlock2d(
+            num_channels, block_expansion, kernel_size=(3, 3), padding=(1, 1)
         )
-
+        
         down_blocks = []
         up_blocks = []
         for i in range(num_down_blocks):
-            attn_klass = Attention if i == num_down_blocks - 1 else LinearAttention
             in_features = min(max_features, block_expansion * (2**i))
             out_features = min(max_features, block_expansion * (2 ** (i + 1)))
             down_blocks.append(
-                nn.ModuleList(
-                    [
-                        # ConvNeXtV2Block(in_features),
-                        # RMSNorm(in_features),
-                        DownBlock2d(in_features, out_features),
-                    ]
-                )
+                DownBlock2d(in_features, out_features),
             )
-            attn_klass = Attention if i == 0 else LinearAttention
             decoder_in_feature = out_features * 2
             if i == num_down_blocks - 1:
                 decoder_in_feature = out_features
             up_blocks.append(
                 nn.ModuleList(
                     [
-                        ConvNeXtV2Block(decoder_in_feature),
-                        ConvNeXtV2Block(decoder_in_feature),
-                        # attn_klass(decoder_in_feature, heads=4, dim_head=32),
-                        RMSNorm(decoder_in_feature),
+                        ResBlock2d(decoder_in_feature, decoder_in_feature, 3, 1),
+                        ResBlock2d(decoder_in_feature, decoder_in_feature, 3, 1),
                         UpBlock2d(decoder_in_feature, in_features)
                     ]
                 )
@@ -104,9 +89,8 @@ class InpaintingNetwork(nn.Module):
         out = self.first(source_image)
         encoder_map = [out]
         
-        for block, norm, downsample in self.down_blocks:
-            out = block(out)
-            out = downsample(norm(out))
+        for down in self.down_blocks:
+            out = down(out)
             encoder_map.append(out)
 
         output_dict = {}
@@ -127,14 +111,13 @@ class InpaintingNetwork(nn.Module):
         warped_encoder_maps.append(out_ij)
         
         for i in range(self.num_down_blocks):
-            block1, block2, attn, norm, upsample = self.up_blocks[i]
+            block1, block2, upsample = self.up_blocks[i]
             
             out = block1(out)
 
             out = block2(out)
-            out = out + attn(out)
             
-            out = upsample(norm(out))
+            out = upsample(out)
 
             encode_i = encoder_map[-(i + 2)]
             encode_ij = self.deform_input(encode_i.detach(), deformation)
@@ -177,8 +160,7 @@ class InpaintingNetwork(nn.Module):
         encoder_map = []
         encoder_map.append(self.occlude_input(out.detach(), occlusion_map[-1].detach()))
         for i in range(len(self.down_blocks)):
-            for layer in self.down_blocks[i]:
-                out = layer(out.detach())
+            out = self.down_blocks[i](out.detach())
             out_mask = self.occlude_input(out.detach(), occlusion_map[2 - i].detach())
             encoder_map.append(out_mask.detach())
 

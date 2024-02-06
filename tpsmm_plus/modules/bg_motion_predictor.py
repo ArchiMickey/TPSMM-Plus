@@ -2,7 +2,7 @@ from torch import nn
 import torch
 from torchvision import models
 
-from tpsmm_plus.modules.tpsmm.util import AntiAliasInterpolation2d
+from tpsmm_plus.modules.util import AntiAliasInterpolation2d
 from tpsmm_plus.modules.simple_vit import SimpleViT
 
 class BGMotionPredictor(nn.Module):
@@ -23,19 +23,6 @@ class BGMotionPredictor(nn.Module):
         self.bg_encoder.fc = nn.Linear(num_features, 6)
         self.bg_encoder.fc.weight.data.zero_()
         self.bg_encoder.fc.bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
-        # self.bg_encoder = SimpleViT(
-        #     image_size=256,
-        #     patch_size=16,
-        #     num_classes=6,
-        #     dim=256,
-        #     depth=6,
-        #     heads=8,
-        #     mlp_dim=512,
-        #     channels=6,
-        # )
-        # self.bg_encoder.to_patch_embedding[2] = nn.Linear(6*16*16, 256, bias=False)
-        # self.bg_encoder.linear_head[1].weight.data.zero_()
-        # self.bg_encoder.linear_head[1].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
 
     def forward(self, source_image, driving_image):
         if self.scale_factor != 1:

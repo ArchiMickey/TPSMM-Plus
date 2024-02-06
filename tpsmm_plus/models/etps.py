@@ -4,10 +4,10 @@ import torch
 
 torch.set_float32_matmul_precision("medium")
 
-from tpsmm_plus.modules.tpsmm.dense_motion import DenseMotionNetwork
-from tpsmm_plus.modules.tpsmm.inpainting_network import InpaintingNetwork
-from tpsmm_plus.modules.tpsmm.keypoint_detector import KPDetector
-from tpsmm_plus.modules.tpsmm.bg_motion_predictor import BGMotionPredictor
+from tpsmm_plus.modules.dense_motion import DenseMotionNetwork
+from tpsmm_plus.modules.inpainting_network import InpaintingNetwork
+from tpsmm_plus.modules.keypoint_detector import KPDetector
+from tpsmm_plus.modules.bg_motion_predictor import BGMotionPredictor
 from tpsmm_plus.modules.losses.etps_loss import ETPSLoss
 from util import Plotter
 
@@ -35,9 +35,11 @@ class ETPS(pl.LightningModule):
             **model_params["dense_motion_params"], **model_params["common_params"]
         )
 
-        self.bg_predictor = BGMotionPredictor(
-            **model_params["bg_predictor_params"], **model_params["common_params"]
-        )
+        self.bg_predictor = None
+        if model_params["common_params"]["bg"]:
+            self.bg_predictor = BGMotionPredictor(
+                **model_params["bg_predictor_params"], **model_params["common_params"]
+            )
 
         self.loss_fn = ETPSLoss(**loss_params)
 
@@ -52,7 +54,7 @@ class ETPS(pl.LightningModule):
         self.dropout_maxp = train_params["dropout_maxp"]
         self.dropout_inc_epoch = train_params["dropout_inc_epoch"]
         self.dropout_startp = train_params["dropout_startp"]
-        
+
         self.plotter = Plotter(**visualizer_params)
 
     def forward(self, source_imgs, driving_img):
@@ -70,7 +72,7 @@ class ETPS(pl.LightningModule):
         out_dict |= {"kp_source": kp_src, "kp_driving": kp_driving}
 
         bg_param = None
-        if self.current_epoch >= self.bg_start:
+        if self.current_epoch >= self.bg_start and self.bg_predictor is not None:
             bg_param = self.bg_predictor(src, driving)
         out_dict |= {"bg_param": bg_param}
 
@@ -85,7 +87,7 @@ class ETPS(pl.LightningModule):
         )
         out_dict |= dense_motion
 
-        generated = self.inpainting_network(src, dense_motion, kp_src, kp_driving)
+        generated = self.inpainting_network(src, dense_motion)
         out_dict |= {"generated": generated}
 
         loss, loss_dict = self.loss_fn(**out_dict)
