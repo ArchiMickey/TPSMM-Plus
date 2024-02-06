@@ -23,6 +23,7 @@ loss_params:
     equivariance: 1
     warp: 1
     bg: 1
+    kp_distance: 1
 
 transform_params:
   sigma_affine: 0.05

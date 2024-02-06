@@ -63,6 +63,7 @@ class ETPSLoss(nn.Module):
         generated,
         source,
         driving,
+        kp_source,
         kp_driving,
         inpainting_network,
         kp_extractor,
@@ -121,6 +122,36 @@ class ETPSLoss(nn.Module):
             bg_loss = torch.abs(eye - bg_loss).mean()
             bg_loss = bg_loss * self.loss_weights["bg"]
         out_dict["bg_loss"] = bg_loss
+
+        if self.loss_weights["kp_distance"]:
+            bz, num_kp, kp_dim = kp_source["fg_kp"].shape
+            sk = kp_source["fg_kp"].unsqueeze(2) - kp_source["fg_kp"].unsqueeze(1)
+            dk = kp_driving["fg_kp"].unsqueeze(2) - kp_driving["fg_kp"].unsqueeze(1)
+            source_dist_loss = (
+                -torch.sign(
+                    (
+                        torch.sqrt((sk * sk).sum(-1) + 1e-8)
+                        + torch.eye(num_kp).cuda() * 0.2
+                    )
+                    - 0.2
+                )
+                + 1
+            ).mean()
+            driving_dist_loss = (
+                -torch.sign(
+                    (
+                        torch.sqrt((dk * dk).sum(-1) + 1e-8)
+                        + torch.eye(num_kp).cuda() * 0.2
+                    )
+                    - 0.2
+                )
+                + 1
+            ).mean()
+            # driving_dist_loss = (torch.sign(1-(torch.sqrt((dk*dk).sum(-1)+1e-8)+torch.eye(num_kp).cuda()))+1).mean()
+            value_total = self.loss_weights["kp_distance"] * (
+                source_dist_loss + driving_dist_loss
+            )
+        out_dict["kp_distance_loss"] = value_total
 
         loss = rec_loss + p_loss + eq_loss + warp_loss + bg_loss
 
