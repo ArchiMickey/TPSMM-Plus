@@ -1,6 +1,10 @@
 from torch import nn
 import torch.nn.functional as F
 import torch
+import math
+from einops import rearrange
+from tpsmm_plus.modules.dynamic_conv import Dynamic_conv2d
+from functools import partial
 
 
 class TPS:
@@ -163,8 +167,11 @@ def make_coordinate_grid(spatial_size, type):
 
     return meshed
 
+
 class Block(nn.Module):
-    def __init__(self, in_features, out_features, kernel_size, padding):
+    def __init__(
+        self, in_features, out_features, kernel_size, padding, activation="relu"
+    ):
         super(Block, self).__init__()
         self.conv = nn.Conv2d(
             in_channels=in_features,
@@ -173,7 +180,10 @@ class Block(nn.Module):
             padding=padding,
         )
         self.norm = nn.InstanceNorm2d(out_features, affine=True)
-        self.act = nn.SiLU()
+        if activation == "relu":
+            self.act = nn.ReLU()
+        elif activation == "silu":
+            self.act = nn.SiLU()
 
     def forward(self, x):
         out = self.conv(x)
@@ -187,10 +197,14 @@ class ResBlock2d(nn.Module):
     Res block, preserve spatial resolution.
     """
 
-    def __init__(self, in_features, out_features, kernel_size, padding):
+    def __init__(
+        self, in_features, out_features, kernel_size, padding, activation="relu"
+    ):
         super(ResBlock2d, self).__init__()
-        self.block1 = Block(in_features, out_features, kernel_size, padding)
-        self.block2 = Block(out_features, out_features, kernel_size, padding)
+        self.block1 = Block(in_features, out_features, kernel_size, padding, activation)
+        self.block2 = Block(
+            out_features, out_features, kernel_size, padding, activation
+        )
 
         self.res_conv = (
             nn.Conv2d(in_features, out_features, 1)
@@ -211,11 +225,15 @@ class UpBlock2d(nn.Module):
     Upsampling block for use in decoder.
     """
 
-    def __init__(self, in_features, out_features):
+    def __init__(self, in_features, out_features, activation="silu"):
         super(UpBlock2d, self).__init__()
         self.up = nn.Upsample(scale_factor=2)
         self.conv = nn.Conv2d(in_features, out_features, 3, padding=1)
         self.norm = nn.InstanceNorm2d(out_features, affine=True)
+        if activation == "silu":
+            self.act = nn.SiLU()
+        elif activation == "relu":
+            self.act = nn.ReLU()
 
     def forward(self, x):
         use_bf16 = x.dtype == torch.bfloat16
@@ -229,7 +247,7 @@ class UpBlock2d(nn.Module):
 
         out = self.conv(out)
         out = self.norm(out)
-        out = F.silu(out)
+        out = self.act(out)
         return out
 
 
@@ -238,16 +256,20 @@ class DownBlock2d(nn.Module):
     Downsampling block for use in encoder.
     """
 
-    def __init__(self, in_features, out_features):
+    def __init__(self, in_features, out_features, activation="relu"):
         super(DownBlock2d, self).__init__()
         self.conv = nn.Conv2d(in_features, out_features, kernel_size=2, stride=2)
         self.norm = nn.InstanceNorm2d(out_features, affine=True)
+        if activation == "relu":
+            self.act = nn.ReLU()
+        elif activation == "silu":
+            self.act = nn.SiLU()
         # self.pool = nn.AvgPool2d(kernel_size=(2, 2))
 
     def forward(self, x):
         out = self.conv(x)
         out = self.norm(out)
-        out = F.silu(out)
+        out = self.act(out)
         # out = self.pool(out)
         return out
 
@@ -283,9 +305,17 @@ class Encoder(nn.Module):
     Hourglass Encoder
     """
 
-    def __init__(self, block_expansion, in_features, num_blocks=3, max_features=256):
+    def __init__(
+        self,
+        block_expansion,
+        in_features,
+        num_blocks=3,
+        max_features=256,
+        activation="relu",
+    ):
         super(Encoder, self).__init__()
 
+        down_block_klass = partial(DownBlock2d, activation=activation)
         down_blocks = []
         for i in range(num_blocks):
             is_last = i == num_blocks - 1
@@ -295,7 +325,7 @@ class Encoder(nn.Module):
             )
             out_features = min(max_features, block_expansion * (2 ** (i + 1)))
             block = [
-                DownBlock2d(in_features, out_features),
+                down_block_klass(in_features, out_features),
             ]
             down_blocks.append(nn.ModuleList(block))
         self.down_blocks = nn.ModuleList(down_blocks)
@@ -319,11 +349,19 @@ class Decoder(nn.Module):
     Hourglass Decoder
     """
 
-    def __init__(self, block_expansion, in_features, num_blocks=3, max_features=256):
+    def __init__(
+        self,
+        block_expansion,
+        in_features,
+        num_blocks=3,
+        max_features=256,
+        activation="relu",
+    ):
         super(Decoder, self).__init__()
 
         up_blocks = []
         self.out_channels = []
+        up_block_klass = partial(UpBlock2d, activation=activation)
         for i in range(num_blocks)[::-1]:
             # attn_klass = Attention if i == 0 else LinearAttention
             in_filters = (1 if i == num_blocks - 1 else 2) * min(
@@ -332,7 +370,7 @@ class Decoder(nn.Module):
             self.out_channels.append(in_filters)
             out_filters = min(max_features, block_expansion * (2**i))
             block = [
-                UpBlock2d(in_filters, out_filters),
+                up_block_klass(in_filters, out_filters),
             ]
             up_blocks.append(nn.ModuleList(block))
         self.up_blocks = nn.ModuleList(up_blocks)
@@ -357,10 +395,22 @@ class Hourglass(nn.Module):
     Hourglass architecture.
     """
 
-    def __init__(self, block_expansion, in_features, num_blocks=3, max_features=256, **kwargs):
+    def __init__(
+        self,
+        block_expansion,
+        in_features,
+        num_blocks=3,
+        max_features=256,
+        activation="relu",
+        **kwargs,
+    ):
         super(Hourglass, self).__init__()
-        self.encoder = Encoder(block_expansion, in_features, num_blocks, max_features)
-        self.decoder = Decoder(block_expansion, in_features, num_blocks, max_features)
+        self.encoder = Encoder(
+            block_expansion, in_features, num_blocks, max_features, activation
+        )
+        self.decoder = Decoder(
+            block_expansion, in_features, num_blocks, max_features, activation
+        )
         self.out_channels = self.decoder.out_channels
         # self.out_filters = self.decoder.out_filters
 
@@ -431,6 +481,254 @@ def to_homogeneous(coordinates):
 
 def from_homogeneous(coordinates):
     return coordinates[..., :2] / coordinates[..., 2:3]
+
+
+class LayerNorm2d(nn.LayerNorm):
+    def __init__(self, *args, **kwargs):
+        super(LayerNorm2d, self).__init__(*args, **kwargs)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        x = rearrange(x, "b c h w -> b (h w) c")
+        x = super(LayerNorm2d, self).forward(x)
+        x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
+        return x
+
+
+class SpaAttention(nn.Module):
+    def __init__(self, dim, num_heads):
+        super(SpaAttention, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(1))
+        self.norm = LayerNorm2d(dim)
+        self.to_qkv = nn.Sequential(
+            nn.Conv2d(dim, dim * 3, 1),
+            nn.Conv2d(dim * 3, dim * 3, 3, padding=1, groups=dim * 3),
+        )
+        self.gate = nn.Sequential(nn.Conv2d(dim, dim, 1), nn.GELU())
+
+        self.to_out = nn.Conv2d(dim, dim, 1)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        out = self.norm(x)
+        q, k, v = self.to_qkv(out).chunk(3, dim=1)
+        g = self.gate(out)
+
+        q, k, v = map(
+            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.num_heads),
+            (q, k, v),
+        )
+
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+
+        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = F.relu(attn)
+
+        out = attn @ v
+
+        out = rearrange(
+            out, "b head c (h w) -> b (head c) h w", head=self.num_heads, h=h, w=w
+        )
+
+        out = out * g
+        out = self.to_out(out)
+
+        return out
+
+
+class FeedForward(nn.Module):
+    def __init__(self, dim):
+        super(FeedForward, self).__init__()
+        self.norm = LayerNorm2d(dim)
+        self.fc = nn.Sequential(
+            nn.Conv2d(dim, dim * 4 * 2, 1),
+            nn.Conv2d(dim * 4 * 2, dim * 4 * 2, 3, 1, 1, groups=dim * 4 * 2),
+        )
+        self.linear = nn.Conv2d(dim * 4, dim, 1)
+
+    def forward(self, x):
+        out = self.norm(x)
+        x, gate = self.fc(out).chunk(2, dim=1)
+        out = F.gelu(x) * gate
+        out = self.linear(out)
+        return out
+
+
+class SpaAttentionBlock(nn.Module):
+    def __init__(self, dim, num_heads=4):
+        super(SpaAttentionBlock, self).__init__()
+        self.attn = SpaAttention(dim, num_heads)
+        self.fc = FeedForward(dim)
+
+    def forward(self, x):
+        x = self.attn(x) + x
+        x = self.fc(x) + x
+        return x
+
+
+class ModulatedConv2d(nn.Module):
+    def __init__(
+        self, in_channel, out_channel, kernel_size, style_dim, demodulate=True
+    ):
+        super().__init__()
+
+        self.eps = 1e-8
+        self.kernel_size = kernel_size
+        self.in_channel = in_channel
+        self.out_channel = out_channel
+
+        fan_in = in_channel * kernel_size**2
+        self.scale = 1 / math.sqrt(fan_in)
+        self.padding = kernel_size // 2
+
+        self.weight = nn.Parameter(
+            torch.randn(1, out_channel, in_channel, kernel_size, kernel_size)
+        )
+
+        self.modulation = nn.Linear(style_dim, in_channel)
+        self.demodulate = demodulate
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}({self.in_channel}, {self.out_channel}, {self.kernel_size}, "
+            f"upsample={self.upsample}, downsample={self.downsample})"
+        )
+
+    def forward(self, input, style):
+        batch, in_channel, height, width = input.shape
+
+        style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
+        weight = self.scale * self.weight * style
+
+        if self.demodulate:
+            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
+            weight = weight * demod.view(batch, self.out_channel, 1, 1, 1)
+
+        weight = weight.view(
+            batch * self.out_channel, in_channel, self.kernel_size, self.kernel_size
+        )
+
+        input = input.reshape(1, batch * in_channel, height, width)
+        out = F.conv2d(input, weight, padding=self.padding, groups=batch)
+        _, _, height, width = out.shape
+        out = out.view(batch, self.out_channel, height, width)
+
+        return out
+
+
+def attn(q, k, v, scale):
+    sim = torch.einsum("b i d, b j d -> b i j", q, k) * scale
+    attn = sim.softmax(dim=-1)
+    out = torch.einsum("b i j, b j d -> b i d", attn, v)
+    return out
+
+
+def linear_attn(q, k, v, scale):
+    q = q.softmax(dim=-2)
+    k = k.softmax(dim=-1)
+
+    q = q * scale
+    context = torch.einsum("b d n, b e n-> b d e", k, v)
+    out = torch.einsum("b d e, b d n -> b e n", context, q)
+    return out
+
+
+class CrossAttention(nn.Module):
+    def __init__(self, dim, x_dim, context_dim, attn_type="vanilla"):
+        super(CrossAttention, self).__init__()
+        self.norm_x = LayerNorm2d(x_dim)
+        self.norm_context = LayerNorm2d(context_dim)
+        self.to_q = nn.Conv2d(x_dim, dim, 1)
+        self.to_kv = nn.Conv2d(context_dim, dim * 2, 1)
+        self.to_out = nn.Conv2d(dim, x_dim, 1)
+        self.scale = dim ** -0.5
+        self.attn_type = attn_type
+
+    def forward(self, x, context):
+        b, c, h, w = x.shape
+        x_norm = self.norm_x(x)
+        context_norm = self.norm_context(context)
+        q = F.relu(self.to_q(x_norm))
+        kv = F.relu(self.to_kv(context_norm))
+        k, v = kv.chunk(2, dim=1)
+        
+        if self.attn_type == "vanilla":
+            q, k, v = map(lambda t: rearrange(t, "b c h w -> b (h w) c"), (q, k, v))
+            out = attn(q, k, v, self.scale)
+            out = rearrange(out, "b (h w) c -> b c h w", h=h, w=w)
+
+        elif self.attn_type == "linear":
+            q, k, v = map(lambda t: rearrange(t, "b c h w -> b c (h w)"), (q, k, v))
+            out = linear_attn(q, k, v, self.scale)
+            out = rearrange(out, "b c (h w) -> b c h w", h=h, w=w)
+
+        else:
+            raise NotImplementedError("Error attn type")
+
+        out = self.to_out(out)
+
+        return out
+
+class MemoryCrossAttention(nn.Module):
+    def __init__(self, dim, x_dim, spatial_dim, num_tps, attn_type="vanilla"):
+        super(MemoryCrossAttention, self).__init__()
+        self.norm_x = LayerNorm2d(x_dim)
+        self.norm_memory = LayerNorm2d(dim)
+        self.feat_proj = nn.Conv2d(x_dim, dim, 1)
+        self.to_q = nn.Conv2d(dim, dim, 1)
+        self.to_style = nn.Sequential(
+            nn.Linear(x_dim + num_tps * 5 * 2, 256),
+            nn.GELU(),
+            nn.Linear(256, 512),
+        )
+        self.style_conv = ModulatedConv2d(spatial_dim, dim, 3, style_dim=512)
+        self.to_kv = nn.Conv2d(dim, dim * 2, 1)
+        self.to_out = nn.Conv2d(dim, x_dim, 1)
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.scale = dim**-0.5
+        self.attn_type = attn_type
+
+    def forward(self, x, memory, kp_source):
+        out_dict = {}
+        b, _, h, w = x.shape
+        x_in = x
+        kp = kp_source.view(b, -1).detach()
+        style_scale = self.pool(x).view(b, -1)
+        style_code = torch.cat((style_scale, kp), dim=-1)
+        style = self.to_style(style_code)
+
+        expand_memory = memory.expand(b, -1, -1, -1)
+        styled_memory = self.style_conv(expand_memory, style)
+
+        x = self.norm_x(x)
+        feat = self.feat_proj(x)
+        out_dict["feat"] = feat
+
+        q = F.relu(self.to_q(feat))
+        styled_memory = self.norm_memory(styled_memory)
+        kv = F.relu(self.to_kv(styled_memory))
+        k, v = kv.chunk(2, dim=1)
+        out_dict["value"] = v
+
+        if self.attn_type == "vanilla":
+            q, k, v = map(lambda t: rearrange(t, "b c h w -> b (h w) c"), (q, k, v))
+            out = attn(q, k, v, self.scale)
+            out = rearrange(out, "b (h w) c -> b c h w", h=h, w=w)
+
+        elif self.attn_type == "linear":
+            q, k, v = map(lambda t: rearrange(t, "b c h w -> b c (h w)"), (q, k, v))
+            out = linear_attn(q, k, v, self.scale)
+            out = rearrange(out, "b c (h w) -> b c h w", h=h, w=w)
+
+        else:
+            raise NotImplementedError("Error attn type")
+
+        out = self.to_out(out)
+        out_dict["out"] = x_in + out
+
+        return out_dict
 
 
 if __name__ == "__main__":

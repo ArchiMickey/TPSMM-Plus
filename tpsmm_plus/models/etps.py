@@ -1,12 +1,13 @@
 import lightning.pytorch as pl
 import wandb
 import torch
+from torchvision.utils import make_grid
 
 torch.set_float32_matmul_precision("medium")
 
 from tpsmm_plus.modules.dense_motion import DenseMotionNetwork
 from tpsmm_plus.modules.inpainting_network import InpaintingNetwork
-from tpsmm_plus.modules.keypoint_detector import KPDetector
+from tpsmm_plus.modules.keypoint_detector import KPDetector, KPDetectorWithDepth
 from tpsmm_plus.modules.bg_motion_predictor import BGMotionPredictor
 from tpsmm_plus.modules.losses.etps_loss import ETPSLoss
 from util import Plotter
@@ -23,7 +24,7 @@ class ETPS(pl.LightningModule):
     ):
         super().__init__()
 
-        self.kp_detector = KPDetector(
+        self.kp_detector = KPDetectorWithDepth(
             **model_params["kp_detector_params"], **model_params["common_params"]
         )
 
@@ -87,6 +88,8 @@ class ETPS(pl.LightningModule):
         )
         out_dict |= dense_motion
 
+        dense_motion["kp_source"] = kp_src
+        dense_motion["kp_driving"] = kp_driving
         generated = self.inpainting_network(src, dense_motion)
         out_dict |= {"generated": generated}
 

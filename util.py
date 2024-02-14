@@ -85,6 +85,12 @@ class Plotter:
                 ),
             )
         ]
+        
+        if "depth" in kp_source:
+            depth = kp_source["depth"].data.cpu()
+            depth = F.interpolate(depth, size=source.shape[2:]).repeat(1, 3, 1, 1)
+            depth = depth.unsqueeze(1)
+            img_row.append(depth)
 
         if "occlusion_map" in kwargs:
             for i in range(len(kwargs["occlusion_map"])):

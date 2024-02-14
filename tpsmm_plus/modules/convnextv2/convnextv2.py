@@ -96,13 +96,24 @@ class ConvNeXtV2(nn.Module):
             trunc_normal_(m.weight, std=.02)
             nn.init.constant_(m.bias, 0)
 
-    def forward_features(self, x):
+    def forward_features(self, x, return_stages=False):
+        h = []
         for i in range(4):
             x = self.downsample_layers[i](x)
             x = self.stages[i](x)
+            h.append(x)
+        
+        if return_stages:
+            return self.norm(x.mean([-2, -1])), h
+        
         return self.norm(x.mean([-2, -1])) # global average pooling, (N, C, H, W) -> (N, C)
 
-    def forward(self, x):
+    def forward(self, x, return_features=False):
+        if return_features:
+            x, h = self.forward_features(x, return_stages=True)
+            x = self.head(x)
+            return x, h
+        
         x = self.forward_features(x)
         x = self.head(x)
         return x

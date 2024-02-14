@@ -2,8 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import lpips
+from torchvision import transforms
+from torchvision.transforms import Resize
 
 from tpsmm_plus.modules.util import AntiAliasInterpolation2d, TPS
+from tpsmm_plus.modules.vit_extractor import VitExtractor
 
 
 class ImagePyramid(nn.Module):
@@ -48,7 +51,7 @@ class EquivarianceLoss(nn.Module):
 
 
 class ETPSLoss(nn.Module):
-    def __init__(self, channels, scales, loss_weights):
+    def __init__(self, channels, scales, loss_weights, use_vit_loss=False):
         super().__init__()
 
         self.channels = channels
@@ -57,6 +60,35 @@ class ETPSLoss(nn.Module):
         self.lpips = lpips.LPIPS(net="vgg")
         self.equivariance_loss = EquivarianceLoss()
         self.loss_weights = loss_weights
+
+        self.extractor = None
+        if use_vit_loss:
+            self.extractor = VitExtractor("dino_vits16", "cuda")
+            imagenet_norm = transforms.Normalize(
+                (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+            )
+            global_resize_transform = Resize(224, max_size=480)
+            self.global_transform = transforms.Compose(
+                [global_resize_transform, imagenet_norm]
+            )
+            self.lambda_app = 1
+            self.lambda_str = 0.1
+            self.lambda_id = 0.1
+
+    def calculate_structure_ssim_loss(self, outputs, target_imgs):
+        loss = 0.0
+        for a, b in zip(target_imgs, outputs):
+            a = self.global_transform(a)
+            b = self.global_transform(b)
+            with torch.no_grad():
+                target_keys_self_sim = self.extractor.get_keys_self_sim_from_input(
+                    a.unsqueeze(0), layer_num=11
+                )
+            keys_ssim = self.extractor.get_keys_self_sim_from_input(
+                b.unsqueeze(0), layer_num=11
+            )
+            loss += F.mse_loss(keys_ssim, target_keys_self_sim)
+        return loss
 
     def forward(
         self,
@@ -124,7 +156,7 @@ class ETPSLoss(nn.Module):
         out_dict["bg_loss"] = bg_loss
 
         kp_dist_loss = 0.0
-        if self.loss_weights["kp_distance"]:
+        if "kp_distance" in self.loss_weights and self.loss_weights["kp_distance"] != 0:
             bz, num_kp, kp_dim = kp_source["fg_kp"].shape
             sk = kp_source["fg_kp"].unsqueeze(2) - kp_source["fg_kp"].unsqueeze(1)
             dk = kp_driving["fg_kp"].unsqueeze(2) - kp_driving["fg_kp"].unsqueeze(1)
@@ -153,7 +185,29 @@ class ETPSLoss(nn.Module):
                 source_dist_loss + driving_dist_loss
             )
         out_dict["kp_distance_loss"] = kp_dist_loss
+        
+        depth_constraint_loss = 0.0
+        if "depth_constraint" in self.loss_weights and self.loss_weights["depth_constraint"] != 0:
+            depth_generated = kp_extractor(generated["prediction"])["depth"]
+            depth_driving = kp_driving["depth"]
+            depth_constraint_loss = self.loss_weights["depth_constraint"] * torch.abs(depth_generated - depth_driving).mean()
+        out_dict["depth_constraint_loss"] = depth_constraint_loss
+        
+        struct_loss = 0.0
+        if self.extractor is not None:
+            struct_loss = self.calculate_structure_ssim_loss(generated["prediction"], driving)
+            struct_loss = struct_loss * self.lambda_str
+        out_dict["structure_loss"] = struct_loss
 
-        loss = rec_loss + p_loss + eq_loss + warp_loss + bg_loss + kp_dist_loss
+        loss = (
+            rec_loss
+            + p_loss
+            + eq_loss
+            + warp_loss
+            + bg_loss
+            + kp_dist_loss
+            + depth_constraint_loss
+            + struct_loss
+        )
 
         return loss, out_dict
